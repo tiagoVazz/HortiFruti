@@ -5,20 +5,26 @@
 ## ** Created by Gabriel Pizzighini and ... ** ## 
 
 import os
+import subprocess
 import colorama as cl
 import platform
 import logging
 import threading
 import atexit
 import time
+import serial
 import RPi.GPIO as GPIO
 import board
 import adafruit_bme680
 import adafruit_ens160
 import smbus
-from .classes import *
+from .database import *
+from .A9comm import *
 
+from .classes import *
+from serial.tools import list_ports
 from time import sleep
+subprocess.run(["sudo", "pigpiod"])
 from gpiozero.pins.pigpio import PiGPIOFactory
 from gpiozero import Servo
 
@@ -148,13 +154,24 @@ def initialize_system():
             ## Set relays pins mode to default 
             relay_module = Relay(1)
             relay_module.deafult_state()
-            return 1
+
+            try:
+                if os.path.exists("../rep/log.txt"):
+                    os.remove("../rep/log.txt")
+
+                # start A9 comm
+                initA9()
+                return 1
+            except:
+                print_r("ERROR-[9] : Unable to delete old log file")
         else:
             print_r("ERROR-[2] : Didn't found an ARM chip 'BCM***' module, please execute me in Raspberry Pi or similar...")
             print(cl.Back.RED + f"You are on a {platform.system()} system")
             return 2
     except:
             print_r("ERROR-[3] : Unable to obtain the base model of the device")
+    
+
 
 # Start the execution of the simulation file [main.py]  
 def initialize_simulator():
@@ -189,6 +206,58 @@ def initialize_real_sensors():
     except:
         print("[" + cl.Fore.RED + "NOT FOUND" + cl.Fore.WHITE + "]" + "- ENS160 not found")  
         pass
+
+#global previous
+previous = 3.9*19/3.80
+def get_OxygenValues() -> float:
+    global previous
+    BAUD_RATE = 9600
+    TIMEOUT = 5
+    PORT = "/dev/ttyACM0"
+    #PORT = "/dev/ttyAMA0"
+    SEPERATOR = "|"
+    
+    value = 0.0
+        
+    myports = [tuple(p) for p in list(serial.tools.list_ports.comports())]
+    #print(myports)
+    ser = serial.Serial(PORT, BAUD_RATE, timeout = TIMEOUT) # Open the serial port
+    
+
+    while True:
+        try:
+            msg_recebida = ser.readline().strip().decode("utf-8")
+                
+                #ser.flush()
+            break
+      
+        except UnicodeDecodeError:
+                #print(".",end="")
+            msg_recebida = ser.readline().strip().decode("utf-8")
+        
+                #ser.flush()
+            pass  
+        
+    try:
+        value = float(msg_recebida)*19/3.80
+        previous = value
+    except ValueError:
+        value = previous
+
+    if (value >= 23 or value <= 15):
+        
+        if (previous <= 23 or previous >= 15):
+            value = previous
+        else:
+            value = 3.9*19/3.80
+
+    elif (value <= 23 and value >= 15):
+        value = value
+    else:
+        value = 0.0
+        
+    return value
+
 
 def read_real_sensors(Location: str):
     """
@@ -282,6 +351,7 @@ def termination_handler():
     GPIO.setup(25, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
     time.sleep(0.5)
     print(cl.Fore.LIGHTRED_EX +".", end="")
+    turn_off_serial()
     time.sleep(0.5)
     print(cl.Fore.LIGHTRED_EX +".", end="")
     time.sleep(0.5)
@@ -371,3 +441,8 @@ def initial_components_test():
     print("***DONE!***")
     print()
 
+def log_data(data):
+    log = open("../rep/log.txt",'a')
+    time_date = strftime("%H:%M:%S", gmtime())
+    log.write(f"{time_date}; {data[0]}; {data[1]};\n")
+    log.close()
